@@ -1,4 +1,5 @@
-from pprint import pprint
+import re
+from itertools import groupby
 
 import boto3
 import luigi
@@ -7,16 +8,18 @@ from luigi.contrib.external_program import ExternalProgramTask
 
 class PgBadgerReportFile(ExternalProgramTask):
     db_name = luigi.Parameter()
-    file_name = luigi.Parameter()
+    date = luigi.Parameter()
+    file_names = luigi.ListParameter()
 
     def requires(self):
-        return DBLogFile(
+        return ConsolidatedDBLogFile(
             db_name=self.db_name,
-            file_name=self.file_name,
+            date=self.date,
+            file_names=self.file_names,
         )
 
     def output(self):
-        return luigi.LocalTarget(f'reports/{self.db_name}/{self.file_name}.html')
+        return luigi.LocalTarget(f'reports/{self.db_name}/{self.date}.html')
 
     def run(self):
         self.output().makedirs()
@@ -60,6 +63,40 @@ class DBLogFile(luigi.Task):
                     break
 
 
+class ConsolidatedDBLogFile(luigi.Task):
+    db_name = luigi.Parameter()
+    date = luigi.Parameter()
+    file_names = luigi.ListParameter()
+
+    def requires(self):
+        return [
+            DBLogFile(
+                db_name=self.db_name,
+                file_name=file_name,
+            )
+            for file_name in self.file_names
+        ]
+
+    def output(self):
+        return luigi.LocalTarget(f'data/{self.db_name}/consolidated/{self.date}.log')
+
+    def run(self):
+        with self.output().open('w') as out_file:
+            for log_file in self.input():
+                with log_file.open() as in_file:
+                    out_file.write(in_file.read())
+
+
+date_format = re.compile(r'(\d{4}-\d{2}-\d{2})')
+
+
+def extract_date_from_log_file_name(file_name):
+    try:
+        return date_format.search(file_name).group(0)
+    except AttributeError:
+        return 'unknown'
+
+
 class MainTask(luigi.Task):
     db_name = luigi.Parameter()
 
@@ -68,8 +105,14 @@ class MainTask(luigi.Task):
         response = client.describe_db_log_files(
             DBInstanceIdentifier=self.db_name,
         )
-        for log_file in response['DescribeDBLogFiles']:
+        all_logs = [
+            log_file['LogFileName']
+            for log_file in response['DescribeDBLogFiles']
+        ]
+        logs_grouped_by_date = groupby(all_logs, key=extract_date_from_log_file_name)
+        for log_date, log_files in logs_grouped_by_date:
             yield PgBadgerReportFile(
                 db_name=self.db_name,
-                file_name=log_file['LogFileName'],
+                date=log_date,
+                file_names=list(log_files),
             )
