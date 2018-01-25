@@ -1,9 +1,10 @@
-import re
 from itertools import groupby
 
 import boto3
 import luigi
 from luigi.contrib.external_program import ExternalProgramTask
+
+from utils import extract_date_from_log_file_name, hash_list
 
 
 class PgBadgerReportFile(ExternalProgramTask):
@@ -19,7 +20,7 @@ class PgBadgerReportFile(ExternalProgramTask):
         )
 
     def output(self):
-        return luigi.LocalTarget(f'reports/{self.db_name}/{self.date}.html')
+        return luigi.LocalTarget(f'reports/{self.db_name}/{self.date}-{hash_list(self.file_names)}.html')
 
     def run(self):
         self.output().makedirs()
@@ -52,10 +53,12 @@ class DBLogFile(luigi.Task):
         with self.output().open('w') as out_file:
             marker = '0'
             while True:
+                print(f'Marker: {marker}')
                 response = client.download_db_log_file_portion(
                     DBInstanceIdentifier=self.db_name,
                     LogFileName=self.file_name,
                     Marker=marker,
+                    NumberOfLines=10000,
                 )
                 marker = response['Marker']
                 out_file.write(response['LogFileData'])
@@ -78,23 +81,13 @@ class ConsolidatedDBLogFile(luigi.Task):
         ]
 
     def output(self):
-        return luigi.LocalTarget(f'data/{self.db_name}/consolidated/{self.date}.log')
+        return luigi.LocalTarget(f'data/{self.db_name}/consolidated/{self.date}-{hash_list(self.file_names)}.log')
 
     def run(self):
         with self.output().open('w') as out_file:
             for log_file in self.input():
                 with log_file.open() as in_file:
                     out_file.write(in_file.read())
-
-
-date_format = re.compile(r'(\d{4}-\d{2}-\d{2})')
-
-
-def extract_date_from_log_file_name(file_name):
-    try:
-        return date_format.search(file_name).group(0)
-    except AttributeError:
-        return 'unknown'
 
 
 class MainTask(luigi.Task):
