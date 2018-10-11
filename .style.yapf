@@ -1,0 +1,8 @@
+[style]
+based_on_style = facebook
+allow_split_before_dict_value = false
+coalesce_brackets = true
+column_limit = 120
+split_arguments_when_comma_terminated = true
+split_before_expression_after_opening_paren = true
+split_complex_comprehension = true
