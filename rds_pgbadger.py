@@ -96,22 +96,28 @@ class MainTask(luigi.Task):
 
     def requires(self):
         client = boto3.client('rds')
-        response = client.describe_db_log_files(
-            DBInstanceIdentifier=self.db_instance_identifier,
-            MaxRecords=self.max_records,
+        response = client.describe_db_log_files(DBInstanceIdentifier=self.db_instance_identifier)
+
+        log_file_names = [log_file['LogFileName'] for log_file in response['DescribeDBLogFiles']]
+
+        # Skip current hour as entries could still be written to the log file.
+        current_date_hour = datetime.datetime.utcnow().strftime('%Y-%m-%d-%H')
+        log_file_names = [
+            log_file_name for log_file_name in log_file_names if not log_file_name.endswith(current_date_hour)
+        ]
+
+        # Sort by date in descending order
+        log_file_names = sorted(
+            log_file_names,
+            key=lambda log_file_name: datetime.datetime.strptime(log_file_name[-13:], '%Y-%m-%d-%H'),
+            reverse=True,
         )
 
-        date_now = datetime.datetime.utcnow().strftime('%Y-%m-%d-%H')
-
-        for log_file in response['DescribeDBLogFiles']:
-            if log_file['LogFileName'].endswith(date_now):
-                # Skip current hour as entries could still be written to the log file.
-                continue
-
+        for log_file_name in log_file_names[:self.max_records]:
             yield PgBadgerReportFileToS3(
                 s3_bucket=self.s3_bucket,
                 db_instance_identifier=self.db_instance_identifier,
-                file_name=log_file['LogFileName'],
+                file_name=log_file_name,
             )
 
 
