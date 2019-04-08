@@ -120,7 +120,7 @@ class MainTask(luigi.Task):
         last_reference -= datetime.timedelta(hours=self.max_records)
         if last_reference.date() not in resolved:
             # In case we are close to midnight (i.e. 2AM) and we are only collecting a few records (i.e. the default 5),
-            # Check if the hours delta is on a different day, and collect those if needed
+            # check if the hours delta is on a different day, and collect those if needed
             log_file_names.extend(collect_for_day(last_reference))
             resolved.add(last_reference.date())
 
