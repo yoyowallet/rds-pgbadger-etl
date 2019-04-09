@@ -93,17 +93,40 @@ class MainTask(luigi.Task):
     s3_bucket = luigi.Parameter()
     db_instance_identifier = luigi.Parameter()
     max_records = luigi.IntParameter(default=5)
+    reference_date_hour = luigi.Parameter(default=datetime.datetime.utcnow().strftime('%Y-%m-%d-%H'))
 
     def requires(self):
         client = boto3.client('rds')
-        response = client.describe_db_log_files(DBInstanceIdentifier=self.db_instance_identifier)
 
-        log_file_names = [log_file['LogFileName'] for log_file in response['DescribeDBLogFiles']]
+        def collect_for_day(reference):
+            # Collect DB logs from RDS that contain the date string for the given reference date
+            response = client.describe_db_log_files(
+                DBInstanceIdentifier=self.db_instance_identifier,
+                FilenameContains=reference.strftime('%Y-%m-%d'),
+                MaxRecords=24,
+            )
+            return [log_file['LogFileName'] for log_file in response['DescribeDBLogFiles']]
+
+        resolved = set()
+        log_file_names = list()
+        last_reference = datetime.datetime.strptime(self.reference_date_hour, '%Y-%m-%d-%H')
+        for i in range(self.max_records // 24 or 1):
+            # In chunks of 24 hours, collect all the available log file names
+            log_file_names.extend(collect_for_day(last_reference))
+            resolved.add(last_reference.date())
+            last_reference -= datetime.timedelta(days=1)
+
+        last_reference = datetime.datetime.strptime(self.reference_date_hour, '%Y-%m-%d-%H')
+        last_reference -= datetime.timedelta(hours=self.max_records)
+        if last_reference.date() not in resolved:
+            # In case we are close to midnight (i.e. 2AM) and we are only collecting a few records (i.e. the default 5),
+            # check if the hours delta is on a different day, and collect those if needed
+            log_file_names.extend(collect_for_day(last_reference))
+            resolved.add(last_reference.date())
 
         # Skip current hour as entries could still be written to the log file.
-        current_date_hour = datetime.datetime.utcnow().strftime('%Y-%m-%d-%H')
         log_file_names = [
-            log_file_name for log_file_name in log_file_names if not log_file_name.endswith(current_date_hour)
+            log_file_name for log_file_name in log_file_names if not log_file_name.endswith(self.reference_date_hour)
         ]
 
         # Sort by date in descending order
@@ -124,13 +147,18 @@ class MainTask(luigi.Task):
 @click.command()
 @click.option('--target-s3-bucket', required=True, envvar='TARGET_S3_BUCKET')
 @click.option('--database-instance-identifier', required=True, envvar='DATABASE_INSTANCE_IDENTIFIER')
-def main(target_s3_bucket, database_instance_identifier):
+@click.option('--reference-datetime', required=False, type=click.DateTime())
+def main(target_s3_bucket, database_instance_identifier, reference_datetime):
+    params = dict(
+        s3_bucket=target_s3_bucket,
+        db_instance_identifier=database_instance_identifier,
+    )
+    if reference_datetime:
+        params['reference_date_hour'] = reference_datetime.strftime('%Y-%m-%d-%H')
+
     luigi.build(
         [
-            MainTask(
-                s3_bucket=target_s3_bucket,
-                db_instance_identifier=database_instance_identifier,
-            ),
+            MainTask(**params),
         ],
         local_scheduler=True,
     )
