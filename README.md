@@ -4,11 +4,12 @@ ETL pipeline for generating pgBadger reports from RDS instances
 ## Requirements
 
 - Python 3.6+
+- `pipenv`
 
 ## Installation
 
 ```bash
-$ make deps
+pipenv install
 ```
 
 ## Usage

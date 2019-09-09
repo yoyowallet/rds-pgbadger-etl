@@ -9,7 +9,7 @@ from luigi.contrib.external_program import ExternalProgramTask
 from luigi.contrib.s3 import S3Target
 
 from utils import extract_date_from_log_file_name, hash_list
-
+from rds_download_log import get_database_region, get_credentials, get_log_file_via_rest
 
 class PgBadgerReportFileToS3(luigi.Task):
     s3_bucket = luigi.Parameter()
@@ -71,23 +71,8 @@ class DBLogFile(luigi.Task):
         return luigi.LocalTarget(f'data/{self.db_instance_identifier}/{self.file_name}')
 
     def run(self):
-        client = boto3.client('rds')
-
         with self.output().open('w') as out_file:
-            marker = '0'
-            while True:
-                print(f'Marker: {marker}')
-                response = client.download_db_log_file_portion(
-                    DBInstanceIdentifier=self.db_instance_identifier,
-                    LogFileName=self.file_name,
-                    Marker=marker,
-                    NumberOfLines=10000,
-                )
-                marker = response['Marker']
-                out_file.write(response['LogFileData'])
-                if not response['AdditionalDataPending']:
-                    break
-
+            out_file.write(get_log_file_via_rest(self.file_name, self.db_instance_identifier))
 
 class MainTask(luigi.Task):
     s3_bucket = luigi.Parameter()
